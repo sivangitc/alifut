@@ -3,6 +3,9 @@
 #include <vector>
 #include <list>
 #include <string>
+#include <codecvt>
+#include <locale>
+
 #include <Windows.h>
 #include <psapi.h>
 
@@ -11,44 +14,40 @@
 
 std::string getMoudleName(HANDLE processHandle, HMODULE module) {
 
-	char name[NAME_SIZE] = { 0 };
-	GetModuleBaseName(
+	TCHAR name[NAME_SIZE] = { 0 };
+	GetModuleFileNameEx(
 		processHandle,
 		module,
-		(LPWSTR)name,
+		name,
 		NAME_SIZE
 	);
-	std::cout << name << "noam";
-	return std::string(name);
-}
+	
+	std::wstring wstr = std::wstring(name);
+	//setup converter
+	using convert_type = std::codecvt_utf8<wchar_t>;
+	std::wstring_convert<convert_type, wchar_t> converter;
 
-
-std::vector<std::string> ProcessDlls(int pid) {
-	std::vector<std::string> procDLLs;
-	HANDLE processHandle = OpenProcess(READ_CONTROL, TRUE, pid);
-	HMODULE modules[MODULES_LIST_SIZE];
-	int size_n = 0;
-	int* size = &size_n;
-	EnumProcessModules(
-		processHandle,
-		modules,
-		MODULES_LIST_SIZE,
-		(LPDWORD)size
-	);
-	std::cout << pid;
-	for (int i = 0; i < *size; i++) {
-		procDLLs.push_back(getMoudleName(processHandle, modules[i]));
-	}
-	return procDLLs;
+	//use converter (.to_bytes: wstr->str, .from_bytes: str->wstr)
+	std::string str = converter.to_bytes(wstr);
+	return str;
 }
 
 
 std::string getProcDlls(int pid) {
 	std::string dlls = "";
-	std::vector<std::string> dlList = ProcessDlls(pid);
-	for (int i = 0; i < dlList.size(); i++)
-	{
-		dlls += dlList[i] + ", ";
+	std::vector<std::string> procDLLs;
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);;
+	HMODULE modules[MODULES_LIST_SIZE];
+	DWORD  size = 0;
+	if (EnumProcessModules(hProcess, modules, sizeof(modules), &size)) {
+		for (int i = 0; i < size / sizeof(HMODULE); i++) {
+			std::string module = getMoudleName(hProcess, modules[i]);
+			if (module.size() > 2) {
+				dlls += module + "\n";
+			}
+			
+		}
 	}
+
 	return dlls;
 }
