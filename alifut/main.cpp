@@ -1,7 +1,7 @@
 #include <iostream>
+#include "ProcessDLL.h"
 
 int main() {
-	std::cout << "Hello World!" << std::endl;
-	int i = 5;
+	std::cout << getProcDlls(8036);
 	return 0;
 }
