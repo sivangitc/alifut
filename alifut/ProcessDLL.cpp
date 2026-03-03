@@ -27,7 +27,7 @@ std::string getMoudleName(HANDLE processHandle, HMODULE module) {
 	using convert_type = std::codecvt_utf8<wchar_t>;
 	std::wstring_convert<convert_type, wchar_t> converter;
 
-	//use converter (.to_bytes: wstr->str, .from_bytes: str->wstr)
+	//use converter (.to_bytes: wstr->str)
 	std::string str = converter.to_bytes(wstr);
 	return str;
 }
@@ -35,19 +35,16 @@ std::string getMoudleName(HANDLE processHandle, HMODULE module) {
 
 std::string getProcDlls(int pid) {
 	std::string dlls = "";
-	std::vector<std::string> procDLLs;
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);;
 	HMODULE modules[MODULES_LIST_SIZE];
 	DWORD  size = 0;
 	if (EnumProcessModules(hProcess, modules, sizeof(modules), &size)) {
 		for (int i = 0; i < size / sizeof(HMODULE); i++) {
 			std::string module = getMoudleName(hProcess, modules[i]);
-			if (module.size() > 2) {
+			if (module.size() > 2 && module[module.size() - 1] == 'l') {
 				dlls += module + "\n";
 			}
-			
 		}
 	}
-
 	return dlls;
 }
