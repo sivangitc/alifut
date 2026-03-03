@@ -4,7 +4,9 @@
 #include <iostream>
 #include <strsafe.h>
 #include <wmistr.h>
+#include <vector>
 #include <tdh.h>
+#pragma comment(lib, "tdh.lib")
 
 #include "events.h"
 
@@ -19,19 +21,35 @@ static const GUID SessionGuid =
 //PEVENT_RECORD_CALLBACK eventRecordCallback;
 
 static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
-	std::cout << "received event!" << std::endl;
+	PTRACE_EVENT_INFO buf;
+	std::vector<BYTE> teiBuffer;
+	ULONG cb = static_cast<ULONG>(teiBuffer.size());
+	TDHSTATUS status = TdhGetEventInformation(pevent_record, 0, NULL, reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data()), &cb);
+	if (status == ERROR_INSUFFICIENT_BUFFER) {
+		teiBuffer.resize(cb);
+		status = TdhGetEventInformation(pevent_record, 0, NULL, reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data()), &cb);
+	}
+	if (status != ERROR_SUCCESS) {
+		std::cout << "getEventInfo failed! " << status << std::endl;
+		return;
+	}
+	
+	buf = reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data());
+	std::cout << "received event!" << pevent_record->EventHeader.ProcessId << std::endl;
+	std::cout << buf->EventPropertyInfoArray. << " " << buf->EventMessageOffset << std::endl;
+	std::cout << buf->EventDescriptor.Id << " " << (int)buf->EventDescriptor.Opcode << std::endl;
 }
 
 
 void set_event_trace_logfile(PEVENT_TRACE_LOGFILE plog_file) {
 	plog_file->LogFileName = NULL;
 	plog_file->LoggerName = (LPWSTR)LOGGERNAME;
-	plog_file->ProcessTraceMode = ETW_PROCESS_TRACE_MODE_NONE;
+	plog_file->ProcessTraceMode = 0;
 	plog_file->EventRecordCallback = eventRecordCallback;
 }
 
 void set_event_trace_properties(PEVENT_TRACE_PROPERTIES ptrace_props) {
-	ptrace_props->Wnode.BufferSize = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(LOGSESSION_NAME) + 1;
+	ptrace_props->Wnode.BufferSize = 4096;
 	ptrace_props->Wnode.Flags = WNODE_FLAG_TRACED_GUID;
 	ptrace_props->Wnode.Guid = SystemTraceControlGuid;
 	ptrace_props->Wnode.ClientContext = 1;
@@ -48,7 +66,7 @@ void list_events() {
 	set_event_trace_properties(&trace_props);
 
 	ULONG res = ControlTraceW(0, LOGGERNAME, &trace_props, EVENT_TRACE_CONTROL_STOP);
-	if (res != ERROR_SUCCESS) {
+	if (res != ERROR_SUCCESS && res != ERROR_WMI_INSTANCE_NOT_FOUND) {
 		std::cout << "ControlTrace failed! " << res << std::endl;
 		return;
 	}
