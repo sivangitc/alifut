@@ -1,6 +1,42 @@
 #include "events.h"
+#include <iostream>
+#include <string>
+#include <cctype>
+#include <algorithm>
 
-int main()
+#define ERROR -1 
+#define NAME_FLAG "--name"
+#define PID_FLAG "--pid"
+
+
+// chaek if string is a number.
+bool isNumber(const std::string& str) {
+	return std::all_of(str.begin(), str.end(), ::isdigit);
+}
+
+
+int main(int argc, char* argv[])
 {
-	list_events();
+	if (argc == 1) {
+		list_events();
+		return 0;
+	}
+	for (int i = 1; i < argc; i++) {
+		if (std::strcmp(argv[i], NAME_FLAG) == 0) { // filter by proces name.
+			filterEventsByName(argv[i + 1]);
+			break;
+		}
+		else if (std::strcmp(argv[i], PID_FLAG) == 0) { // filter by process id.
+			if (isNumber(argv[i + 1]) == false) {
+				std::cout << "USAGE: alifut.exe {[--pid <PID>] [--name <NAME>]}";
+				return ERROR;
+			}
+			filterEventsByPid(std::stoi(argv[i + 1]));
+		}
+		else {
+			std::cout << "USAGE: alifut.exe [--pid <PID>] [--name <NAME>]";
+			return ERROR;
+		}
+	}
+	return 0;
 }
