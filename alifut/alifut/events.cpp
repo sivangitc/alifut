@@ -41,6 +41,7 @@ typedef struct {
 
 typedef struct {
 	int type;
+	int opcode;
 	int pid;
 	int tid;
 	union {
@@ -138,6 +139,7 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 		return;
 
 	event_info.tid = pevent_record->EventHeader.ThreadId;
+	event_info.opcode = pevent_record->EventHeader.EventDescriptor.Opcode;
 	TDHSTATUS status = TdhGetEventInformation(pevent_record, 0, NULL, reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data()), &cb);
 	if (status == ERROR_INSUFFICIENT_BUFFER) {
 		teiBuffer.resize(cb);
@@ -194,16 +196,16 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 	std::wcout << L"\n" << TeiString(teiBuffer, buf->TaskNameOffset) << " " << TeiString(teiBuffer, buf->OpcodeNameOffset) << std::endl;
 	print_event(&event_info);
 
-	
-	// -------------------IF THE THREAD IS SUSPENDED---------------
-	if(IsThreadSuspended(event_info.tid)){ // its a thread id.
-		std::cout << " This thread is suspended" << std::endl;
-	}else{
-		std::cout << " This thread is not suspened" << std::endl;
+	if (event_info.type == PROCESS_TYPE && event_info.opcode == START_OPCODE) {
+		// -------------------IF THE THREAD IS SUSPENDED---------------
+		//if(IsThreadSuspended(event_info.tid)){ // its a thread id.
+		//	std::cout << " This thread is suspended" << std::endl;
+		//}else{
+		//	std::cout << " This thread is not suspened" << std::endl;
+		//}
+		// ---------------------------THE PROCESS DLLS-----------------
+		std::cout << getProcDlls(event_info.pid) << std::endl;
 	}
-	// ---------------------------THE PROCESS DLLS-----------------
-	std::cout << getProcDlls(event_info.pid) << std::endl;
-	
 }
 
 

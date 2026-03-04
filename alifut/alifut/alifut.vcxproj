@@ -129,9 +129,11 @@
   <ItemGroup>
     <ClCompile Include="alifut.cpp" />
     <ClCompile Include="events.cpp" />
+    <ClCompile Include="ProcessInfo.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="events.h" />
+    <ClInclude Include="ProcessInfo.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
