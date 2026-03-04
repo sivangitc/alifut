@@ -1,3 +1,5 @@
+#include <Windows.h>
+#include <tlhelp32.h>
 #include "ProcessInfo.h"
 #include <iostream>
 #include <vector>
@@ -7,7 +9,6 @@
 #include <locale>
 #include <exception>
 
-#include <Windows.h>
 #include <psapi.h>
 
 #define NAME_SIZE  256
@@ -68,6 +69,7 @@ std::string getProcDlls(int pid) {
 	}
 	return dlls;
 }
+
 
 /*
 This function is to check wether thread is suspended.

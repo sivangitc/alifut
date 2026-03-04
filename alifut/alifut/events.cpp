@@ -31,6 +31,7 @@ static int filter_pid = -1;
 static std::string filter_name;
 
 typedef struct {
+	int flags;
 	wchar_t exe_name[MAX_PATH];
 } process_event_info_t;
 
@@ -80,7 +81,8 @@ bool filter_event_user(event_info_t* pevent_info) {
 			std::wstring ws = pevent_info->data.process.exe_name;
 			std::string conv_str(ws.begin(), ws.end());
 			const std::regex r(filter_name);
-			return std::regex_search(conv_str, r);
+			std::cout << conv_str << filter_name << std::endl;
+			return std::regex_match(conv_str, r);
 		}
 	}
 	return true;
@@ -88,9 +90,14 @@ bool filter_event_user(event_info_t* pevent_info) {
 
 void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, 
 	std::vector<wchar_t>& propertyBuffer, bool* is_last_prop, event_info_t* event_info) {
+	//std::wcout << L"property: " << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)") << std::endl;
 	switch (property_idx) {
 	case (PROCESS_PID_INDEX):
 		event_info->pid = std::stoul(propertyBuffer.data(), nullptr, 16);
+		return;
+	case (6):
+		std::wcout << propertyBuffer.data() << std::endl;
+		event_info->data.process.flags = std::stoul(propertyBuffer.data(), nullptr, 16);
 		return;
 	case (PROCESS_IMAGEFILE_INDEX):
 		memcpy(event_info->data.process.exe_name, propertyBuffer.data(), propertyBuffer.size() * 2);
@@ -119,6 +126,7 @@ void print_event(event_info_t* pevent_info) {
 	switch (pevent_info->type) {
 	case (PROCESS_TYPE):
 		std::wcout << L"pid: " << pevent_info->pid << std::endl;
+		std::wcout << L"flags: " << pevent_info->data.process.flags << std::endl;
 		std::wcout << L"executable: " << pevent_info->data.process.exe_name << std::endl;
 		break;
 	case (NETWORK_TYPE):
@@ -204,7 +212,8 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 		//	std::cout << " This thread is not suspened" << std::endl;
 		//}
 		// ---------------------------THE PROCESS DLLS-----------------
-		std::cout << getProcDlls(event_info.pid) << std::endl;
+		std::cout << "is suspended? " << (event_info.data.process.flags & CREATE_SUSPENDED) << std::endl;
+		//std::cout << getProcDlls(event_info.pid) << std::endl;
 	}
 }
 

@@ -4,3 +4,4 @@
 
 std::string getProcDlls(int pid);
 bool IsThreadSuspended(int tid);
+bool isSuspended(int pid);
