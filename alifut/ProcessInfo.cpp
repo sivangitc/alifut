@@ -1,4 +1,4 @@
-#include "ProcessDLL.h"
+#include "ProcessInfo.h"
 #include <iostream>
 #include <vector>
 #include <list>
