@@ -8,7 +8,7 @@
 #include <string>
 #include <tdh.h>
 #pragma comment(lib, "tdh.lib")
-
+#include "ProcessInfo.h"
 #include "events.h"
 
 #define START_OPCODE 1
@@ -139,6 +139,18 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 		if (is_last_property)
 			break;
 	}
+	/*
+	* -------------------IF THE THREAD IS SUSPENDED---------------
+	if(IsThreadSuspended(tid)){ // its a thread id.
+		std::cout << " This thread is suspended << std::endl;
+	}else{
+		std::cout << " This thread is not suspened << std::endl;
+	}
+	---------------------------THE PROCESS DLLS-----------------
+	getProcDlls(pid) - std::string.
+	std::cout << getProcDlls(pid).
+	*/
+	
 }
 
 
@@ -195,4 +207,14 @@ void list_events() {
 		std::cout << "ControlTrace failed! " << res << std::endl;
 		return;
 	}
+}
+
+void filterEventsByPid(int pid)
+{
+	std::cout << " filterEventsByPid: " << pid << std::endl;
+}
+
+void filterEventsByName(std::string name)
+{
+	std::cout << " filterEventsByName: " << name <<std::endl;
 }
