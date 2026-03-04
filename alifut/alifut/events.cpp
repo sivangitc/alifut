@@ -6,6 +6,7 @@
 #include <wmistr.h>
 #include <vector>
 #include <string>
+#include <regex>
 #include <tdh.h>
 #pragma comment(lib, "tdh.lib")
 #include "ProcessInfo.h"
@@ -26,13 +27,36 @@
 #define NETWORK_DST_IP_INDEX 2
 #define NETWORK_DST_PORT_INDEX 4
 
+static int filter_pid = -1;
+static std::string filter_name;
+
+typedef struct {
+	wchar_t exe_name[MAX_PATH];
+} process_event_info_t;
+
+typedef struct {
+	int dst_port;
+	wchar_t dst_ip[16];
+} tcp_connect_event_info_t;
+
+typedef struct {
+	int type;
+	int pid;
+	int tid;
+	union {
+		process_event_info_t process;
+		tcp_connect_event_info_t tcp_connect;
+	} data;
+} event_info_t;
+
 
 _Ret_z_ LPCWSTR TeiString(std::vector<BYTE> &buf, unsigned offset)
 {
 	return reinterpret_cast<LPCWSTR>(buf.data() + offset);
 }
 
-bool filter_event(PEVENT_RECORD pevent_record, int* type) {
+// filters out event types that are not ours
+bool filter_event_basic(PEVENT_RECORD pevent_record, int* type) {
 	int opcode = pevent_record->EventHeader.EventDescriptor.Opcode;
 	int version = pevent_record->EventHeader.EventDescriptor.Version;
 	switch (version) {
@@ -46,48 +70,74 @@ bool filter_event(PEVENT_RECORD pevent_record, int* type) {
 	return false;
 }
 
-void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, std::vector<wchar_t>& propertyBuffer, bool* is_last_prop) {
+bool filter_event_user(event_info_t* pevent_info) {
+	if (pevent_info->type == PROCESS_TYPE) {
+		if (filter_pid != -1) {
+			return pevent_info->pid == filter_pid;
+		}
+		if (!filter_name.empty()) {
+			std::wstring ws = pevent_info->data.process.exe_name;
+			std::string conv_str(ws.begin(), ws.end());
+			const std::regex r(filter_name);
+			return std::regex_search(conv_str, r);
+		}
+	}
+	return true;
+}
+
+void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, 
+	std::vector<wchar_t>& propertyBuffer, bool* is_last_prop, event_info_t* event_info) {
 	switch (property_idx) {
 	case (PROCESS_PID_INDEX):
-		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
-		std::wcout << ": " << std::stoul(propertyBuffer.data(), nullptr, 16) << std::endl;
+		event_info->pid = std::stoul(propertyBuffer.data(), nullptr, 16);
 		return;
 	case (PROCESS_IMAGEFILE_INDEX):
-		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
-		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		memcpy(event_info->data.process.exe_name, propertyBuffer.data(), propertyBuffer.size() * 2);
 		*is_last_prop = true;
 		return;
 	}
 }
 
-void handle_network_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, std::vector<wchar_t>& propertyBuffer, bool* is_last_prop) {
+void handle_network_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, 
+	std::vector<wchar_t>& propertyBuffer, bool* is_last_prop, event_info_t* event_info) {
 	switch (property_idx) {
 	case (NETWORK_PID_INDEX):
-		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
-		std::wcout << ": " << std::stoul(propertyBuffer.data(), nullptr, 10) << std::endl;
+		event_info->pid = std::stoul(propertyBuffer.data(), nullptr, 10);
 		return;
 	case (NETWORK_DST_IP_INDEX):
-		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
-		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		memcpy(event_info->data.tcp_connect.dst_ip, propertyBuffer.data(), propertyBuffer.size() * 2);
 		return;
 	case (NETWORK_DST_PORT_INDEX):
-		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
-		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		event_info->data.tcp_connect.dst_port = std::stoul(propertyBuffer.data(), nullptr, 10);
 		*is_last_prop = true;
 		return;
+	}
+}
+
+void print_event(event_info_t* pevent_info) {
+	switch (pevent_info->type) {
+	case (PROCESS_TYPE):
+		std::wcout << L"pid: " << pevent_info->pid << std::endl;
+		std::wcout << L"executable: " << pevent_info->data.process.exe_name << std::endl;
+		break;
+	case (NETWORK_TYPE):
+		std::wcout << L"pid: " << pevent_info->pid << std::endl;
+		std::wcout << L"dest ip: " << pevent_info->data.tcp_connect.dst_ip << std::endl;
+		std::wcout << L"dest port: " << pevent_info->data.tcp_connect.dst_port << std::endl;
+		break;
 	}
 }
 
 static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 	PTRACE_EVENT_INFO buf;
 	std::vector<BYTE> teiBuffer;
-	int type;
+	event_info_t event_info = { 0 };
 	ULONG cb = static_cast<ULONG>(teiBuffer.size());
 	
-	filter_event(pevent_record, &type);
-	if (!filter_event(pevent_record, &type))
+	if (!filter_event_basic(pevent_record, &event_info.type))
 		return;
 
+	event_info.tid = pevent_record->EventHeader.ThreadId;
 	TDHSTATUS status = TdhGetEventInformation(pevent_record, 0, NULL, reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data()), &cb);
 	if (status == ERROR_INSUFFICIENT_BUFFER) {
 		teiBuffer.resize(cb);
@@ -101,7 +151,6 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 	unsigned long pointer_size = pevent_record->EventHeader.Flags & EVENT_HEADER_FLAG_32_BIT_HEADER ? 4 : 8;
 
 	buf = reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data());
-	std::wcout << L"\n" << TeiString(teiBuffer, buf->TaskNameOffset) << " " << TeiString(teiBuffer, buf->OpcodeNameOffset) << std::endl;
 	PBYTE pbData = static_cast<BYTE *>(pevent_record->UserData);
 	BYTE const* pbDataEnd = pbData + pevent_record->UserDataLength;
 
@@ -113,7 +162,7 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 			ULONG cbBuffer = static_cast<ULONG>(propertyBuffer.size() * 2);
 			USHORT cbUsed = 0;
 			status = TdhFormatProperty(buf, NULL, pointer_size, epi.nonStructType.InType, epi.nonStructType.OutType,
-				epi.length, pbDataEnd - pbData, pbData, &cbBuffer, propertyBuffer.data(), &cbUsed);
+				epi.length, (USHORT)(pbDataEnd - pbData), pbData, &cbBuffer, propertyBuffer.data(), &cbUsed);
 			if (status == ERROR_INSUFFICIENT_BUFFER && propertyBuffer.size() < cbBuffer / 2) {
 				propertyBuffer.resize(cbBuffer / 2);
 				continue;
@@ -123,12 +172,12 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 				std::cout << "tdhformatProperty failed " << status << std::endl;
 			}
 			else {
-				switch (type) {
+				switch (event_info.type) {
 				case (PROCESS_TYPE):
-					handle_process_property(i, teiBuffer, epi, propertyBuffer, &is_last_property);
+					handle_process_property(i, teiBuffer, epi, propertyBuffer, &is_last_property, &event_info);
 					break;
 				case (NETWORK_TYPE):
-					handle_network_property(i, teiBuffer, epi, propertyBuffer, &is_last_property);
+					handle_network_property(i, teiBuffer, epi, propertyBuffer, &is_last_property, &event_info);
 					break;
 				}
 			}
@@ -139,37 +188,44 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 		if (is_last_property)
 			break;
 	}
-	/*
-	* -------------------IF THE THREAD IS SUSPENDED---------------
-	if(IsThreadSuspended(tid)){ // its a thread id.
-		std::cout << " This thread is suspended << std::endl;
+
+	if (!filter_event_user(&event_info))
+		return;
+	std::wcout << L"\n" << TeiString(teiBuffer, buf->TaskNameOffset) << " " << TeiString(teiBuffer, buf->OpcodeNameOffset) << std::endl;
+	print_event(&event_info);
+
+	
+	// -------------------IF THE THREAD IS SUSPENDED---------------
+	if(IsThreadSuspended(event_info.tid)){ // its a thread id.
+		std::cout << " This thread is suspended" << std::endl;
 	}else{
-		std::cout << " This thread is not suspened << std::endl;
+		std::cout << " This thread is not suspened" << std::endl;
 	}
-	---------------------------THE PROCESS DLLS-----------------
-	getProcDlls(pid) - std::string.
-	std::cout << getProcDlls(pid).
-	*/
+	// ---------------------------THE PROCESS DLLS-----------------
+	std::cout << getProcDlls(event_info.pid) << std::endl;
 	
 }
 
 
-void set_event_trace_properties(PEVENT_TRACE_PROPERTIES ptrace_props) {
+void set_event_trace_properties(PEVENT_TRACE_PROPERTIES ptrace_props, bool with_tcp) {
 	ptrace_props->Wnode.BufferSize = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(KERNEL_LOGGER_NAMEW);
 	ptrace_props->Wnode.Flags = WNODE_FLAG_TRACED_GUID;
 	ptrace_props->Wnode.Guid = SystemTraceControlGuid;
 	ptrace_props->Wnode.ClientContext = 1;
 	ptrace_props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-	ptrace_props->EnableFlags = EVENT_TRACE_FLAG_PROCESS | EVENT_TRACE_FLAG_NETWORK_TCPIP;
+	ptrace_props->EnableFlags = EVENT_TRACE_FLAG_PROCESS;
+	if (with_tcp) {
+		ptrace_props->EnableFlags |= EVENT_TRACE_FLAG_NETWORK_TCPIP;
+	}
 	ptrace_props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
 	StringCbCopy((LPWSTR)((char*)ptrace_props + ptrace_props->LoggerNameOffset), sizeof(KERNEL_LOGGER_NAMEW), KERNEL_LOGGER_NAMEW);
 }
 
-void list_events() {
+void list_events(bool with_tcp) {
 	TRACEHANDLE startTraceHandle;
 	BYTE buf[sizeof(EVENT_TRACE_PROPERTIES) + sizeof(KERNEL_LOGGER_NAMEW)] = { 0 };
 	EVENT_TRACE_PROPERTIES* ptrace_props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(buf);
-	set_event_trace_properties(ptrace_props);
+	set_event_trace_properties(ptrace_props, with_tcp);
 
 	ULONG res = ControlTraceW(0, KERNEL_LOGGER_NAMEW, ptrace_props, EVENT_TRACE_CONTROL_STOP);
 	if (res != ERROR_SUCCESS && res != ERROR_WMI_INSTANCE_NOT_FOUND) {
@@ -177,7 +233,7 @@ void list_events() {
 		return;
 	}
 	
-	set_event_trace_properties(ptrace_props);
+	set_event_trace_properties(ptrace_props, with_tcp);
 	res = StartTrace(&startTraceHandle, (LPWSTR)KERNEL_LOGGER_NAMEW, ptrace_props);
 	if (res != ERROR_SUCCESS) {
 		std::cout << "StartTrace failed! " << res << std::endl;
@@ -201,7 +257,7 @@ void list_events() {
 	std::cout << "status: " << status << std::endl;
 	CloseTrace(h_trace);
 
-	set_event_trace_properties(ptrace_props);
+	set_event_trace_properties(ptrace_props, with_tcp);
 	res = ControlTraceW(0, KERNEL_LOGGER_NAMEW, ptrace_props, EVENT_TRACE_CONTROL_STOP);
 	if (res != ERROR_SUCCESS && res != ERROR_WMI_INSTANCE_NOT_FOUND) {
 		std::cout << "ControlTrace failed! " << res << std::endl;
@@ -212,9 +268,19 @@ void list_events() {
 void filterEventsByPid(int pid)
 {
 	std::cout << " filterEventsByPid: " << pid << std::endl;
+	filter_pid = pid;
+	list_events();
 }
 
 void filterEventsByName(std::string name)
 {
-	std::cout << " filterEventsByName: " << name <<std::endl;
+	std::cout << " filterEventsByName: " << name << std::endl;
+	filter_name = name;
+	list_events();
+}
+
+void filterWithTCP()
+{
+	std::cout << " filterEventsWithTCP" << std::endl;
+	list_events(true);
 }

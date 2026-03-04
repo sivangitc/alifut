@@ -7,6 +7,7 @@
 #define ERROR -1 
 #define NAME_FLAG "--name"
 #define PID_FLAG "--pid"
+#define TCP_FLAG "--tcp"
 
 
 // chaek if string is a number.
@@ -18,10 +19,14 @@ bool isNumber(const std::string& str) {
 int main(int argc, char* argv[])
 {
 	if (argc == 1) {
-		list_events();
+		list_events(true);
 		return 0;
 	}
 	for (int i = 1; i < argc; i++) {
+		if (std::strcmp(argv[i], TCP_FLAG) == 0) { // show tcp connections.
+			filterWithTCP();
+			break;
+		}
 		if (std::strcmp(argv[i], NAME_FLAG) == 0) { // filter by proces name.
 			filterEventsByName(argv[i + 1]);
 			break;
@@ -32,6 +37,7 @@ int main(int argc, char* argv[])
 				return ERROR;
 			}
 			filterEventsByPid(std::stoi(argv[i + 1]));
+			break;
 		}
 		else {
 			std::cout << "USAGE: alifut.exe [--pid <PID>] [--name <NAME>]";
