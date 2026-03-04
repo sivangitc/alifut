@@ -14,37 +14,66 @@
 #define START_OPCODE 1
 #define END_OPCODE 2
 
-#define PROCESS_VERSION 3
-#define PID_INDEX 1
-#define IMAGEFILE_INDEX 8
+#define PROCESS_TYPE PROCESS_VERSION
+#define PROCESS_VERSION 4
+#define PROCESS_PID_INDEX 1
+#define PROCESS_IMAGEFILE_INDEX 8
 
+#define NETWORK_TYPE NETWORK_VERSION
 #define NETWORK_VERSION 2
-#define CONNECT_OPCODE 15
+#define CONNECT_OPCODE 12
+#define NETWORK_PID_INDEX 0
+#define NETWORK_DST_IP_INDEX 2
+#define NETWORK_DST_PORT_INDEX 4
+
 
 _Ret_z_ LPCWSTR TeiString(std::vector<BYTE> &buf, unsigned offset)
 {
 	return reinterpret_cast<LPCWSTR>(buf.data() + offset);
 }
 
-bool filter_event(PEVENT_RECORD pevent_record) {
+bool filter_event(PEVENT_RECORD pevent_record, int* type) {
 	int opcode = pevent_record->EventHeader.EventDescriptor.Opcode;
-	switch (pevent_record->EventHeader.EventDescriptor.Version) {
+	int version = pevent_record->EventHeader.EventDescriptor.Version;
+	switch (version) {
 	case (PROCESS_VERSION):
+		*type = PROCESS_TYPE;
 		return (opcode == START_OPCODE || opcode == END_OPCODE);
 	case (NETWORK_VERSION):
+		*type = NETWORK_TYPE;
 		return opcode == CONNECT_OPCODE;
 	}
+	return false;
 }
 
-void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, std::vector<wchar_t>& propertyBuffer) {
+void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, std::vector<wchar_t>& propertyBuffer, bool* is_last_prop) {
 	switch (property_idx) {
-	case (PID_INDEX):
+	case (PROCESS_PID_INDEX):
 		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
 		std::wcout << ": " << std::stoul(propertyBuffer.data(), nullptr, 16) << std::endl;
 		return;
-	case (IMAGEFILE_INDEX):
+	case (PROCESS_IMAGEFILE_INDEX):
 		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
 		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		*is_last_prop = true;
+		return;
+	}
+}
+
+void handle_network_property(int property_idx, std::vector<BYTE>& record_buf, EVENT_PROPERTY_INFO const& epi, std::vector<wchar_t>& propertyBuffer, bool* is_last_prop) {
+	switch (property_idx) {
+	case (NETWORK_PID_INDEX):
+		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
+		std::wcout << ": " << std::stoul(propertyBuffer.data(), nullptr, 10) << std::endl;
+		return;
+	case (NETWORK_DST_IP_INDEX):
+		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
+		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		return;
+	case (NETWORK_DST_PORT_INDEX):
+		std::wcout << (epi.NameOffset ? TeiString(record_buf, epi.NameOffset) : L"(noname)");
+		std::wcout << ": " << propertyBuffer.data() << std::endl;
+		*is_last_prop = true;
 		return;
 	}
 }
@@ -52,9 +81,11 @@ void handle_process_property(int property_idx, std::vector<BYTE>& record_buf, EV
 static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 	PTRACE_EVENT_INFO buf;
 	std::vector<BYTE> teiBuffer;
+	int type;
 	ULONG cb = static_cast<ULONG>(teiBuffer.size());
-
-	if (!filter_event(pevent_record))
+	
+	filter_event(pevent_record, &type);
+	if (!filter_event(pevent_record, &type))
 		return;
 
 	TDHSTATUS status = TdhGetEventInformation(pevent_record, 0, NULL, reinterpret_cast<TRACE_EVENT_INFO*>(teiBuffer.data()), &cb);
@@ -75,6 +106,7 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 	BYTE const* pbDataEnd = pbData + pevent_record->UserDataLength;
 
 	for (unsigned int i = 0; i < buf->TopLevelPropertyCount; i++) {
+		bool is_last_property = false;
 		EVENT_PROPERTY_INFO const& epi = buf->EventPropertyInfoArray[i];
 		std::vector<wchar_t> propertyBuffer = { 0 };
 		while (1) {
@@ -91,52 +123,55 @@ static VOID eventRecordCallback(PEVENT_RECORD pevent_record) {
 				std::cout << "tdhformatProperty failed " << status << std::endl;
 			}
 			else {
-				handle_process_property(i, teiBuffer, epi, propertyBuffer);
+				switch (type) {
+				case (PROCESS_TYPE):
+					handle_process_property(i, teiBuffer, epi, propertyBuffer, &is_last_property);
+					break;
+				case (NETWORK_TYPE):
+					handle_network_property(i, teiBuffer, epi, propertyBuffer, &is_last_property);
+					break;
+				}
 			}
 			
 			pbData += cbUsed;
 			break;
 		}
+		if (is_last_property)
+			break;
 	}
 }
 
 
 void set_event_trace_properties(PEVENT_TRACE_PROPERTIES ptrace_props) {
-	ptrace_props->Wnode.BufferSize = 4096;
+	ptrace_props->Wnode.BufferSize = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(KERNEL_LOGGER_NAMEW);
 	ptrace_props->Wnode.Flags = WNODE_FLAG_TRACED_GUID;
 	ptrace_props->Wnode.Guid = SystemTraceControlGuid;
 	ptrace_props->Wnode.ClientContext = 1;
 	ptrace_props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
 	ptrace_props->EnableFlags = EVENT_TRACE_FLAG_PROCESS | EVENT_TRACE_FLAG_NETWORK_TCPIP;
 	ptrace_props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
-	ptrace_props->LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + sizeof(KERNEL_LOGGER_NAMEW);
-	StringCbCopy((LPWSTR)((char*)ptrace_props + ptrace_props->LogFileNameOffset), sizeof(KERNEL_LOGGER_NAMEW), KERNEL_LOGGER_NAMEW);
+	StringCbCopy((LPWSTR)((char*)ptrace_props + ptrace_props->LoggerNameOffset), sizeof(KERNEL_LOGGER_NAMEW), KERNEL_LOGGER_NAMEW);
 }
 
 void list_events() {
 	TRACEHANDLE startTraceHandle;
-	EVENT_TRACE_PROPERTIES trace_props = { 0 };
-	set_event_trace_properties(&trace_props);
+	BYTE buf[sizeof(EVENT_TRACE_PROPERTIES) + sizeof(KERNEL_LOGGER_NAMEW)] = { 0 };
+	EVENT_TRACE_PROPERTIES* ptrace_props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(buf);
+	set_event_trace_properties(ptrace_props);
 
-	ULONG res = ControlTraceW(0, KERNEL_LOGGER_NAMEW, &trace_props, EVENT_TRACE_CONTROL_STOP);
+	ULONG res = ControlTraceW(0, KERNEL_LOGGER_NAMEW, ptrace_props, EVENT_TRACE_CONTROL_STOP);
 	if (res != ERROR_SUCCESS && res != ERROR_WMI_INSTANCE_NOT_FOUND) {
 		std::cout << "ControlTrace failed! " << res << std::endl;
 		return;
 	}
 	
-	res = StartTrace(&startTraceHandle, (LPWSTR)KERNEL_LOGGER_NAMEW, &trace_props);
+	set_event_trace_properties(ptrace_props);
+	res = StartTrace(&startTraceHandle, (LPWSTR)KERNEL_LOGGER_NAMEW, ptrace_props);
 	if (res != ERROR_SUCCESS) {
 		std::cout << "StartTrace failed! " << res << std::endl;
 		return;
 	}
 
-	create_realtime_consumer();
-
-	CloseTrace(startTraceHandle);
-}
-
-void create_realtime_consumer()
-{
 	EVENT_TRACE_LOGFILE trace = { 0 };
 	TDHSTATUS status = ERROR_SUCCESS;
 	trace.LogFileName = NULL;
@@ -153,4 +188,11 @@ void create_realtime_consumer()
 	status = ProcessTrace(&h_trace, 1, 0, 0); // blocking
 	std::cout << "status: " << status << std::endl;
 	CloseTrace(h_trace);
+
+	set_event_trace_properties(ptrace_props);
+	res = ControlTraceW(0, KERNEL_LOGGER_NAMEW, ptrace_props, EVENT_TRACE_CONTROL_STOP);
+	if (res != ERROR_SUCCESS && res != ERROR_WMI_INSTANCE_NOT_FOUND) {
+		std::cout << "ControlTrace failed! " << res << std::endl;
+		return;
+	}
 }
